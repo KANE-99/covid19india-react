@@ -28,7 +28,15 @@ import classnames from 'classnames';
 import {max} from 'date-fns';
 import equal from 'fast-deep-equal';
 import produce from 'immer';
-import {memo, useCallback, useEffect, useMemo, useState, lazy} from 'react';
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  lazy,
+} from 'react';
 import {
   ChevronLeft,
   ChevronsLeft,
@@ -41,6 +49,127 @@ import {useTrail, useTransition, animated, config} from 'react-spring';
 import {useSessionStorage} from 'react-use';
 // eslint-disable-next-line
 import worker from 'workerize-loader!../workers/getDistricts';
+
+function debounce(method, delay) {
+  clearTimeout(method._tId);
+  method._tId = setTimeout(function () {
+    method();
+  }, delay);
+}
+
+function handleScroll() {
+  debounce(onScroll.bind(this), 100);
+}
+
+function handleXScroll() {
+  debounce(onXScroll.bind(this), 100);
+}
+
+function onXScroll() {
+  if (localStorage.getItem('sticked') === 'true') {
+    const stickies = document.getElementsByClassName('sticky');
+    Array.from(stickies).forEach((sticky) => {
+      this.headers[sticky.firstChild.textContent] = {
+        ele: sticky,
+        left: sticky.getBoundingClientRect().left,
+        width: sticky.getBoundingClientRect().width,
+      };
+    });
+    Object.entries(this.headers).map(([_, config]) => {
+      const {ele, left, width} = config;
+      const clonedEle = ele.nextSibling;
+
+      if (clonedEle?.classList?.contains('cloned')) {
+        clonedEle.style.left = left + 'px';
+        clonedEle.style.justifyContent = 'flex-start';
+        const endsAtX = left + width;
+
+        let fromRight = 0;
+        let fromLeft = 0;
+
+        if (endsAtX > this.clipEndAt) {
+          fromRight = endsAtX - this.clipEndAt + 'px';
+        } else if (left < this.clipStartAt) {
+          fromLeft = this.clipStartAt - left + 'px';
+        }
+        clonedEle.style.clipPath = `inset(0 ${fromRight} 0 ${fromLeft})`;
+      }
+    });
+  }
+}
+
+function onScroll() {
+  if (window.scrollY > this.top && window.scrollY < this.bottom - 100) {
+    if (
+      localStorage.getItem('sticked') === 'false' ||
+      localStorage.getItem('sticked') === null
+    ) {
+      const stickies = document.getElementsByClassName('sticky');
+
+      Array.from(stickies).forEach((sticky) => {
+        this.headers[sticky.firstChild.textContent] = {
+          ele: sticky,
+          left: sticky.getBoundingClientRect().left,
+          width: sticky.getBoundingClientRect().width,
+          height: sticky.getBoundingClientRect().height,
+        };
+      });
+      const headerLength = Object.keys(this.headers).length;
+      Object.entries(this.headers).map(([_, config], index) => {
+        const {ele, left, width, height} = config;
+        const styles = window.getComputedStyle(ele);
+        const paddingLR =
+          parseFloat(styles.paddingLeft) + parseFloat(styles.paddingRight);
+        const paddingTB =
+          parseFloat(styles.paddingTop) + parseFloat(styles.paddingBottom);
+        const clonedHeader = ele.cloneNode(true);
+        clonedHeader.classList.add('cloned');
+        clonedHeader.classList.toggle('fixed', true);
+        clonedHeader.style.left = left + 'px';
+        clonedHeader.style.width = width - paddingLR + 'px';
+        clonedHeader.style.height = height - paddingTB + 'px';
+        clonedHeader.style.justifyContent = 'flex-start';
+        clonedHeader.classList.remove('sticky');
+        if (index === 0) {
+          clonedHeader.style.zIndex = '100';
+          clonedHeader.style.marginLeft = '-10px';
+          clonedHeader.style.borderLeft = '10px solid #161625';
+          clonedHeader.style.borderBottom = '4px solid #161625';
+        } else {
+          clonedHeader.style.zIndex = '99';
+        }
+        if (index === headerLength - 1) {
+          clonedHeader.style.marginRight = '0';
+        }
+        const endsAtX = left + width;
+        if (endsAtX > this.clipEndAt) {
+          clonedHeader.style.clipPath = `inset(0 ${
+            endsAtX - this.clipEndAt + 'px'
+          } 0 0)`;
+        }
+        ele.after(clonedHeader);
+        localStorage.setItem('sticked', true);
+      });
+    }
+  } else if (localStorage.getItem('sticked') === 'true') {
+    const clonedElements = document.getElementsByClassName('cloned');
+    while (clonedElements[0]) {
+      clonedElements[0].parentNode.removeChild(clonedElements[0]);
+    }
+    localStorage.setItem('sticked', false);
+  }
+}
+
+function usePrevious(value) {
+  const ref = useRef();
+  useEffect(() => {
+    ref.current = value;
+  });
+  return ref.current;
+}
+
+let x = null;
+let y = null;
 
 const Row = lazy(() => retry(() => import('./Row')));
 
@@ -166,6 +295,98 @@ function Table({
       }
     });
   }, [tableOption, states]);
+
+  const previousVal = usePrevious({expandTable});
+
+  useEffect(() => {
+    const handleOnResize = () => {
+      console.log('resized?');
+      document.removeEventListener('scroll', x);
+      document
+        .getElementsByClassName('table-container')[0]
+        .removeEventListener('scroll', y);
+      const table = document
+        .getElementsByClassName('table-container')[0]
+        .getBoundingClientRect();
+      const positions = {
+        top: document.getElementsByClassName('table-container')[0].offsetTop,
+        bottom:
+          document.getElementsByClassName('table-container')[0].offsetTop +
+          table.height,
+        clipEndAt: table.x + table.width,
+        clipStartAt: table.x,
+        headers: {},
+      };
+      x = handleScroll.bind(positions);
+      y = handleXScroll.bind(positions);
+      document.addEventListener('scroll', x);
+      document
+        .getElementsByClassName('table-container')[0]
+        .addEventListener('scroll', y);
+      y();
+    };
+    window.addEventListener('resize', handleOnResize);
+    return () => {
+      window.removeEventListener('resize', handleOnResize);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (previousVal && !equal(previousVal.expandTable, expandTable)) {
+      setTimeout(() => {
+        document.removeEventListener('scroll', x);
+        document
+          .getElementsByClassName('table-container')[0]
+          .removeEventListener('scroll', y);
+        const table = document
+          .getElementsByClassName('table-container')[0]
+          .getBoundingClientRect();
+        const positions = {
+          top: document.getElementsByClassName('table-container')[0].offsetTop,
+          bottom:
+            document.getElementsByClassName('table-container')[0].offsetTop +
+            table.height,
+          clipEndAt: table.x + table.width,
+          clipStartAt: table.x,
+          headers: {},
+        };
+        x = handleScroll.bind(positions);
+        y = handleXScroll.bind(positions);
+        document.addEventListener('scroll', x);
+        document
+          .getElementsByClassName('table-container')[0]
+          .addEventListener('scroll', y);
+      }, 500);
+    } else if (previousVal) {
+      setTimeout(() => {
+        const table = document
+          .getElementsByClassName('table-container')[0]
+          .getBoundingClientRect();
+        const positions = {
+          top: document.getElementsByClassName('table-container')[0].offsetTop,
+          bottom:
+            document.getElementsByClassName('table-container')[0].offsetTop +
+            table.height,
+          clipEndAt: table.x + table.width,
+          clipStartAt: table.x,
+          headers: {},
+        };
+        x = handleScroll.bind(positions);
+        y = handleXScroll.bind(positions);
+        document.addEventListener('scroll', x);
+        document
+          .getElementsByClassName('table-container')[0]
+          .addEventListener('scroll', y);
+      }, 500);
+    }
+
+    return () => {
+      document.removeEventListener('scroll', x);
+      document
+        .getElementsByClassName('table-container')[0]
+        .removeEventListener('scroll', y);
+    };
+  }, [expandTable, previousVal]);
 
   useEffect(() => {
     setPage((p) => Math.max(0, Math.min(p, numPages - 1)));
@@ -318,17 +539,16 @@ function Table({
             </animated.div>
           )
       )}
-
       <div className="table-container">
         <div
-          className="table fadeInUp"
+          className="table"
           style={{
             gridTemplateColumns: `repeat(${tableStatistics.length + 1}, auto)`,
           }}
         >
           <div className="row heading">
             <div
-              className="cell heading"
+              className="cell heading sticky"
               onClick={handleSortClick.bind(this, 'regionName')}
             >
               <div>{t(!showDistricts ? 'State/UT' : 'District')}</div>

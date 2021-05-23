@@ -27,7 +27,7 @@ function StateHeaderCell({handleSort, sortData, setSortData, statistic}) {
 
   return (
     <div
-      className="cell heading"
+      className="cell heading sticky"
       onClick={handleSort.bind(this, statistic)}
       {...longPressEvent}
     >

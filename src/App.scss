@@ -5040,3 +5040,11 @@ footer {
     transform: translate3d(0, 20px, 0);
   }
 }
+
+.fixed {
+  position: fixed !important;
+  top:0 !important;
+  margin-right: 0;
+  border-right: 4px solid #161625;
+  // transition: left .05s ease 0s;
+}
